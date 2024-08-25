@@ -1,45 +1,61 @@
-from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 
+from api.permissions import IsAuthor
 from api.serializers import CommentSerializer, GroupSerializer, PostSerializer
-from posts.models import Comment, Group, Post
+from posts.models import Group, Post
 
 
-class PerformUpdateDestroyAuthorMixin(viewsets.ModelViewSet):
-    def perform_update(self, serializer):
-        if serializer.instance.author != self.request.user:
-            raise PermissionDenied('Изменение чужого контента запрещено!')
-        super().perform_update(serializer)
+class ViewSetBase(viewsets.ModelViewSet):
+    """Базовый класс-родитель для указания разрешений и класса viewset."""
 
-    def perform_destroy(self, instance):
-        if instance.author != self.request.user:
-            raise PermissionDenied('Изменение чужого контента запрещено!')
-        super().perform_destroy(instance)
+    permission_classes = (IsAuthor,)
 
 
 class GroupViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet для просмотра групп.
+
+    Предоставляет только операции GET, HEAD, OPTIONS для модели Group.
+    """
+
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
 
 
-class PostViewSet(PerformUpdateDestroyAuthorMixin):
+class PostViewSet(ViewSetBase):
+    """ViewSet для управления постами.
+
+    Позволяет выполнять CRUD операции для модели Post.
+    """
+
     queryset = Post.objects.all()
     serializer_class = PostSerializer
 
     def perform_create(self, serializer):
+        """Устанавливает текущего пользователя как автора поста."""
         serializer.save(author=self.request.user)
 
 
-class CommentViewSet(PerformUpdateDestroyAuthorMixin):
-    queryset = Comment.objects.all()
+class CommentViewSet(ViewSetBase):
+    """ViewSet для управления комментариями.
+
+    Позволяет выполнять CRUD операции для модели Comment.
+    """
+
     serializer_class = CommentSerializer
 
+    def get_post(self):
+        """Получает пост по post_id из URL, возвращает 404 если не найден."""
+        return get_object_or_404(Post, pk=self.kwargs.get('post_id'))
+
     def get_queryset(self):
-        post_id = self.kwargs.get('post_id')
-        post = get_object_or_404(Post, pk=post_id)
-        return post.comments.all()
+        """Возвращает QuerySet с комментариями для конкретного поста."""
+        return self.get_post().comments.all()
 
     def perform_create(self, serializer):
-        post = get_object_or_404(Post, pk=self.kwargs.get('post_id'))
-        serializer.save(author=self.request.user, post=post)
+        """Переопределение метода создания комментария.
+
+        Устанавливает текущего пользователя как автора комментария и связывает
+        комментарий с постом.
+        """
+        serializer.save(author=self.request.user, post=self.get_post())
